@@ -7,10 +7,12 @@ import { supabase, Project } from '@/lib/supabase';
 import { BannerAd } from '@/components/BannerAd';
 import { offlineSync } from '@/lib/offline-sync';
 import { useGuestGuard } from '@/lib/guest-guard';
+import { useAuth } from '@/lib/auth-context';
 
 export default function ProjelerScreen() {
   const router = useRouter();
   const { requireAuth } = useGuestGuard();
+  const { isGuest } = useAuth();
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
   const [isOnline, setIsOnline] = useState(true);
@@ -18,10 +20,15 @@ export default function ProjelerScreen() {
   const fetch = useCallback(async () => {
     try {
       setLoading(true);
-      const { data } = await supabase
+      if (isGuest) {
+        setProjects(await offlineSync.getCachedProjects());
+        return;
+      }
+      const { data, error } = await supabase
         .from('projects')
         .select('*, project_materials(*)')
         .order('created_at', { ascending: false });
+      if (error) throw error;
       if (data && data.length > 0) {
         setProjects(data);
         await offlineSync.cacheProjects(data);
@@ -35,7 +42,7 @@ export default function ProjelerScreen() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [isGuest]);
 
   useFocusEffect(useCallback(() => { fetch().catch(() => {}); }, [fetch]));
 
@@ -56,7 +63,7 @@ export default function ProjelerScreen() {
         </View>
         <TouchableOpacity
           style={styles.addButton}
-          onPress={() => requireAuth() && router.push('/project-detail')}
+          onPress={() => (isGuest || requireAuth()) && router.push('/project-detail')}
         >
           <Plus color={Colors.white} size={24} />
         </TouchableOpacity>

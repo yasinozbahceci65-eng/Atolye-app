@@ -5,6 +5,7 @@ import { ArrowLeft, Save, Calculator, CheckCircle2, XCircle, ShoppingCart, Ruler
 import { Colors } from '@/lib/colors';
 import { supabase, Item, Project, ProjectMaterial, UnitType } from '@/lib/supabase';
 import { useProfile } from '@/lib/profile-context';
+import { useAuth } from '@/lib/auth-context';
 import { shareWhatsAppSummary, generatePdfQuote as exportPdfQuote } from '@/lib/pdf-share';
 import { offlineSync } from '@/lib/offline-sync';
 
@@ -103,6 +104,7 @@ export default function ProjectDetailScreen() {
   const { id } = useLocalSearchParams<{ id?: string }>();
   const router = useRouter();
   const { profile } = useProfile();
+  const { isGuest } = useAuth();
   const [project, setProject] = useState<Project | null>(null);
   const [items, setItems] = useState<Item[]>([]);
   const [loading, setLoading] = useState(true);
@@ -124,31 +126,46 @@ export default function ProjectDetailScreen() {
 
   const fetch = useCallback(async () => {
     try {
-      const itemsRes = await supabase.from('items').select('*, categories(*)').order('name');
-      if (itemsRes.error) throw itemsRes.error;
-      setItems(itemsRes.data ?? []);
-      if (id) {
-        const { data: proj, error: projectError } = await supabase
-          .from('projects')
-          .select('*, project_materials(*)')
-          .eq('id', id)
-          .maybeSingle();
-        if (projectError) throw projectError;
-        if (proj) {
-          setProject(proj);
-          setProjectName(proj.project_name);
-          setProjectType(proj.project_type);
-          setArea(proj.area_m2 ? String(proj.area_m2) : '');
-          setMaterials(proj.project_materials ?? []);
-          if (proj.project_materials && proj.project_materials.length > 0) setCalculated(true);
+      if (isGuest) {
+        setItems(await offlineSync.getCachedItems());
+        if (id) {
+          const localProject = await offlineSync.getLocalProject(id);
+          if (localProject) {
+            setProject(localProject);
+            setProjectName(localProject.project_name);
+            setProjectType(localProject.project_type);
+            setArea(localProject.area_m2 ? String(localProject.area_m2) : '');
+            setMaterials(localProject.project_materials ?? []);
+            setCalculated((localProject.project_materials ?? []).length > 0);
+          }
+        }
+      } else {
+        const itemsRes = await supabase.from('items').select('*, categories(*)').order('name');
+        if (itemsRes.error) throw itemsRes.error;
+        setItems(itemsRes.data ?? []);
+        if (id) {
+          const { data: proj, error: projectError } = await supabase
+            .from('projects')
+            .select('*, project_materials(*)')
+            .eq('id', id)
+            .maybeSingle();
+          if (projectError) throw projectError;
+          if (proj) {
+            setProject(proj);
+            setProjectName(proj.project_name);
+            setProjectType(proj.project_type);
+            setArea(proj.area_m2 ? String(proj.area_m2) : '');
+            setMaterials(proj.project_materials ?? []);
+            if (proj.project_materials && proj.project_materials.length > 0) setCalculated(true);
+          }
         }
       }
     } catch {
-      // supabase erisim hatasi
+      setItems([]);
     } finally {
       setLoading(false);
     }
-  }, [id]);
+  }, [id, isGuest]);
 
   useEffect(() => { fetch().catch(() => {}); }, [fetch]);
 
@@ -235,23 +252,41 @@ export default function ProjectDetailScreen() {
       area_m2: parseFloat(area) || null,
       is_completed: false,
     };
+    const projectId = project?.id ?? `local-${Date.now()}`;
+    const localProject: Project = {
+      id: projectId,
+      ...projectData,
+      notes: project?.notes ?? null,
+      created_at: project?.created_at ?? new Date().toISOString(),
+      project_materials: materials.map((material, index) => ({
+        ...material,
+        id: material.id.startsWith('temp-') ? `local-material-${Date.now()}-${index}` : material.id,
+        project_id: projectId,
+      })),
+    };
     try {
-      let projectId = project?.id;
-      if (projectId) {
-        const { error: updateErr } = await supabase.from('projects').update(projectData).eq('id', projectId);
+      if (isGuest) {
+        await offlineSync.saveLocalProject(localProject);
+        setSaving(false);
+        router.back();
+        return;
+      }
+      let savedProjectId: string = project?.id ?? '';
+      if (savedProjectId) {
+        const { error: updateErr } = await supabase.from('projects').update(projectData).eq('id', savedProjectId);
         if (updateErr) throw updateErr;
-        const { error: materialsDeleteError } = await supabase.from('project_materials').delete().eq('project_id', projectId);
+        const { error: materialsDeleteError } = await supabase.from('project_materials').delete().eq('project_id', savedProjectId);
         if (materialsDeleteError) throw materialsDeleteError;
       } else {
         const { data: newProj, error: insertErr } = await supabase.from('projects').insert(projectData).select('id').maybeSingle();
         if (insertErr) throw insertErr;
-        projectId = newProj?.id;
+        savedProjectId = newProj?.id ?? '';
       }
-      if (!projectId) throw new Error('Proje kimliği oluşturulamadı.');
+      if (!savedProjectId) throw new Error('project_id_missing');
       if (materials.length > 0) {
         const { error: matErr } = await supabase.from('project_materials').insert(
           materials.map(m => ({
-            project_id: projectId,
+            project_id: savedProjectId,
             item_id: m.item_id,
             material_name: m.material_name,
             required_quantity: m.required_quantity,
@@ -275,8 +310,9 @@ export default function ProjectDetailScreen() {
         Alert.alert('Çevrimdışı Kaydedildi', 'İnternet bağlantısı geldiğinde senkronize edilecek.');
         router.back();
       } else {
-        const msg = err instanceof Error ? err.message : 'Proje kaydedilemedi.';
-        Alert.alert('Hata', msg);
+        await offlineSync.saveLocalProject(localProject).catch(() => {});
+        Alert.alert('Cihaza Kaydedildi', 'Proje internet bağlantısı olmadan cihazınıza kaydedildi.');
+        router.back();
       }
     }
   };

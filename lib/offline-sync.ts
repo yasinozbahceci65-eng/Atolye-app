@@ -64,6 +64,19 @@ class OfflineSync {
     return data ? JSON.parse(data) : [];
   }
 
+  async saveLocalProject(project: Project): Promise<void> {
+    const projects = await this.getCachedProjects();
+    const existingIndex = projects.findIndex(item => item.id === project.id);
+    if (existingIndex >= 0) projects[existingIndex] = project;
+    else projects.unshift(project);
+    await this.cacheProjects(projects);
+  }
+
+  async getLocalProject(id: string): Promise<Project | null> {
+    const projects = await this.getCachedProjects();
+    return projects.find(project => project.id === id) ?? null;
+  }
+
   async addPendingChange(change: Omit<PendingChange, 'id' | 'timestamp'>) {
     const pending = await this.getPendingChanges();
     pending.push({ ...change, id: `pc-${Date.now()}-${Math.random()}`, timestamp: Date.now() });
