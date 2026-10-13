@@ -51,7 +51,7 @@ export default function LoginScreen() {
       <View style={styles.content}>
         <View style={styles.brandBlock}>
           <Image
-            source={require('@/assets/images/ATOLYEM_20260829_082715_0000.png')}
+            source={require('@/assets/images/ATOLYEM_20261009_203310_0000.png')}
             style={styles.logo}
             resizeMode="contain"
           />
@@ -109,10 +109,10 @@ const styles = StyleSheet.create({
   },
   content: {
     flex: 1, justifyContent: 'center', alignItems: 'stretch',
-    paddingHorizontal: 28, paddingTop: Platform.OS === 'web' ? 0 : 16, paddingBottom: 16,
+    paddingHorizontal: 28, paddingTop: Platform.OS === 'web' ? 56 : 40, paddingBottom: 24,
   },
   brandBlock: { alignItems: 'center', marginBottom: 44 },
-  logo: { width: 110, height: 110 },
+  logo: { width: 132, height: 132 },
   title: { fontFamily: 'Inter-Bold', fontSize: 26, color: Colors.neutral800, marginTop: 16, textAlign: 'center' },
   subtitle: { fontFamily: 'Inter-Regular', fontSize: 14, color: Colors.neutral500, marginTop: 6, textAlign: 'center' },
   actionBlock: { width: '100%', maxWidth: 420, alignSelf: 'center' },
@@ -133,6 +133,6 @@ const styles = StyleSheet.create({
   guestButtonText: { fontFamily: 'Inter-Medium', fontSize: 14, color: Colors.neutral500 },
   termsText: {
     maxWidth: 360, alignSelf: 'center', fontFamily: 'Inter-Regular', fontSize: 11,
-    color: Colors.neutral400, lineHeight: 17, textAlign: 'center', marginTop: 'auto', paddingTop: 44, marginBottom: 24,
+    color: Colors.neutral400, lineHeight: 17, textAlign: 'center', marginTop: 48, marginBottom: 8,
   },
 });
