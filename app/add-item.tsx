@@ -1,9 +1,9 @@
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, ActivityIndicator, Alert } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import { ArrowLeft, ScanLine, Save, Camera } from 'lucide-react-native';
 import { Colors } from '@/lib/colors';
-import { supabase, Category, UnitType } from '@/lib/supabase';
+import { supabase, UnitType } from '@/lib/supabase';
 import { useGuestGuard } from '@/lib/guest-guard';
 
 const UNITS: UnitType[] = ['Litre', 'Adet', 'Metre', 'Kg', 'Kutu', 'm²'];
@@ -15,14 +15,13 @@ const TRADE_CATEGORIES = [
   { name: 'Laminat Parke', color: '#EF4444' },
   { name: 'Tesisat', color: '#06B6D4' },
   { name: 'Marangoz', color: '#8B5CF6' },
-];
+] as const;
 
 export default function AddItemScreen() {
   const router = useRouter();
   const { requireAuth } = useGuestGuard();
   const { barcode } = useLocalSearchParams<{ barcode?: string }>();
-  const [categories, setCategories] = useState<Category[]>([]);
-  const [categoryError, setCategoryError] = useState<string | null>(null);
+  const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [name, setName] = useState('');
   const [quantity, setQuantity] = useState('0');
@@ -36,21 +35,36 @@ export default function AddItemScreen() {
       router.back();
       return;
     }
-    (async () => {
-      try {
-        const { data, error } = await supabase.from('categories').select('id,name,color,icon,created_at').order('name');
-        if (error) throw error;
-        setCategories(data ?? []);
-      } catch {
-        setCategoryError('Kategoriler yüklenemedi.');
-      }
-    })();
+
   }, []);
 
   const save = async () => {
     if (!name.trim()) { Alert.alert('Uyarı', 'Lütfen malzeme adı girin'); return; }
     setSaving(true);
     try {
+      let categoryId: string | null = null;
+      if (selectedCategory) {
+        const category = TRADE_CATEGORIES.find(item => item.name === selectedCategory);
+        if (!category) throw new Error('category_not_found');
+        const { data: existingCategory, error: categoryError } = await supabase
+          .from('categories')
+          .select('id')
+          .eq('name', category.name)
+          .maybeSingle();
+        if (categoryError) throw categoryError;
+        if (existingCategory) {
+          categoryId = existingCategory.id;
+        } else {
+          const { data: insertedCategory, error: insertCategoryError } = await supabase
+            .from('categories')
+            .insert({ name: category.name, color: category.color, icon: 'box' })
+            .select('id')
+            .maybeSingle();
+          if (insertCategoryError) throw insertCategoryError;
+          categoryId = insertedCategory?.id ?? null;
+        }
+      }
+
       const { error } = await supabase.from('items').insert({
         name: name.trim(), quantity: parseFloat(quantity) || 0, max_quantity: 100,
         unit_type: unitType, category_id: categoryId, critical_level: 10,
@@ -79,20 +93,19 @@ export default function AddItemScreen() {
         <Text style={styles.label}>Malzeme Adı *</Text>
         <TextInput style={styles.input} value={name} onChangeText={setName} placeholder="Örn: Beyaz Duvar Boyası" />
 
-        <Text style={styles.label}>Kategori</Text>
-        {categoryError && <Text style={styles.errorText}>{categoryError}</Text>}
+          <Text style={styles.label}>Kategori</Text>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.chipScroll}>
-          <TouchableOpacity style={[styles.chip, !categoryId && styles.chipActive]} onPress={() => setCategoryId(null)}>
-            <Text style={[styles.chipText, !categoryId && styles.chipTextActive]}>Kategorisiz</Text>
+          <TouchableOpacity style={[styles.chip, !selectedCategory && styles.chipActive]} onPress={() => setSelectedCategory(null)}>
+            <Text style={[styles.chipText, !selectedCategory && styles.chipTextActive]}>Kategorisiz</Text>
           </TouchableOpacity>
-          {categories.map(c => (
+          {TRADE_CATEGORIES.map(category => (
             <TouchableOpacity
-              key={c.id}
-              style={[styles.chip, categoryId === c.id && styles.chipActive]}
-              onPress={() => setCategoryId(categoryId === c.id ? null : c.id)}
+              key={category.name}
+              style={[styles.chip, selectedCategory === category.name && styles.chipActive]}
+              onPress={() => setSelectedCategory(selectedCategory === category.name ? null : category.name)}
             >
-              <View style={[styles.chipDot, { backgroundColor: c.color }]} />
-              <Text style={[styles.chipText, categoryId === c.id && styles.chipTextActive]}>{c.name}</Text>
+              <View style={[styles.chipDot, { backgroundColor: category.color }]} />
+              <Text style={[styles.chipText, selectedCategory === category.name && styles.chipTextActive]}>{category.name}</Text>
             </TouchableOpacity>
           ))}
         </ScrollView>
@@ -158,7 +171,6 @@ const styles = StyleSheet.create({
   chipDot: { width: 8, height: 8, borderRadius: 4 },
   chipText: { fontFamily: 'Inter-Medium', fontSize: 13, color: Colors.neutral600 },
   chipTextActive: { color: Colors.white },
-  errorText: { fontFamily: 'Inter-Regular', fontSize: 12, color: Colors.danger, marginBottom: 8 },
   barcodeRow: { flexDirection: 'row', gap: 10 },
   scanBtn: {
     width: 48, backgroundColor: Colors.primary, borderRadius: 12,
