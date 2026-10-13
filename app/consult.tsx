@@ -1,11 +1,10 @@
-import { View, Text, StyleSheet, TouchableOpacity, TextInput, Image, ScrollView, Alert, ActivityIndicator, Platform } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, TextInput, Image, ScrollView, Alert, ActivityIndicator, Linking } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useState, useCallback } from 'react';
 import { ArrowLeft, Camera, Image as ImageIcon, Send, MessageCircle, X } from 'lucide-react-native';
 import { Colors } from '@/lib/colors';
 import * as ImagePicker from 'expo-image-picker';
-import * as Sharing from 'expo-sharing';
-import * as FileSystem from 'expo-file-system';
+import { supabase } from '@/lib/supabase';
 
 const WHATSAPP_NUMBER = '905537743488';
 
@@ -52,29 +51,32 @@ export default function ConsultScreen() {
     if (!photo) { Alert.alert('Uyarı', 'Lütfen fotoğraf yükleyin'); return; }
     setSending(true);
 
-    const prefix = isUsta ? 'Ustaya Danışma' : 'Mimara Danışma';
-    const message = `${prefix}\n\n${description}`;
-
     try {
-      const isAvailable = await Sharing.isAvailableAsync();
-      if (!isAvailable) {
-        Alert.alert('Hata', 'Paylaşım bu cihazda kullanılamıyor.');
-        setSending(false);
-        return;
-      }
+      const response = await fetch(photo);
+      if (!response.ok) throw new Error('photo_fetch_failed');
+      const fileBuffer = await response.arrayBuffer();
+      const fileName = `consult/${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}.jpg`;
+      const { error: uploadError } = await supabase.storage
+        .from('consult-photos')
+        .upload(fileName, fileBuffer, {
+          contentType: 'image/jpeg',
+          cacheControl: '3600',
+          upsert: false,
+        });
+      if (uploadError) throw uploadError;
 
-      await Sharing.shareAsync(photo, {
-        mimeType: 'image/jpeg',
-        dialogTitle: message,
-      });
+      const { data } = supabase.storage.from('consult-photos').getPublicUrl(fileName);
+      if (!data.publicUrl) throw new Error('photo_url_failed');
 
+      const prefix = isUsta ? 'Ustaya Danışma' : 'Mimara Danışma';
+      const message = `${prefix}\n\n${description.trim()}\n\nFotoğraf Linki:\n${data.publicUrl}`;
+      const whatsappUrl = `https://api.whatsapp.com/send?phone=${WHATSAPP_NUMBER}&text=${encodeURIComponent(message)}`;
+      await Linking.openURL(whatsappUrl);
+      router.back();
+    } catch {
+      Alert.alert('Gönderilemedi', 'Fotoğraf yüklenemedi veya WhatsApp açılamadı. Lütfen tekrar deneyin.');
+    } finally {
       setSending(false);
-      Alert.alert('Bilgi', 'Fotoğraf paylaşım ekranı açıldı. WhatsApp seçerek fotoğrafı ve açıklamayı gönderin.', [
-        { text: 'Tamam', onPress: () => router.back() }
-      ]);
-    } catch (e: any) {
-      setSending(false);
-      Alert.alert('Hata', 'Paylaşım açılamadı: ' + (e?.message ?? 'Bilinmeyen hata'));
     }
   };
 
@@ -97,8 +99,8 @@ export default function ConsultScreen() {
             <Text style={styles.infoTitle}>{isUsta ? 'Usta ile İletişim' : 'Mimar ile İletişim'}</Text>
             <Text style={styles.infoDesc}>
               {isUsta
-                ? 'Sorunlu bölgenin fotoğrafını yükleyin, altına açıklama yazın. Gönder butonuna bastığınızda paylaşım ekranı açılır, WhatsApp seçerek fotoğrafı gönderin.'
-                : 'Proje veya tasarım sorularınızı fotoğraf ekleyerek mimara iletin. Paylaşım ekranından WhatsApp ile gönderilir.'}
+                ? 'Sorunlu bölgenin fotoğrafını yükleyin ve açıklama yazın. Gönder butonuna bastığınızda fotoğraf güvenli şekilde yüklenir ve WhatsApp doğrudan açılır.'
+                : 'Proje veya tasarım sorularınızı fotoğraf ekleyerek mimara iletin. Fotoğraf linki ve açıklamanız WhatsApp mesajına eklenir.'}
             </Text>
           </View>
         </View>
@@ -143,7 +145,7 @@ export default function ConsultScreen() {
         </TouchableOpacity>
 
         <Text style={styles.note}>
-          Not: Gönder butonu cihazınızın paylaşım ekranını açar. WhatsApp seçerek fotoğrafı doğrudan gönderebilirsiniz.
+          Not: Fotoğraf yüklenir ve açıklamanız fotoğraf bağlantısıyla birlikte doğrudan WhatsApp numarasına gönderilir.
         </Text>
       </ScrollView>
     </View>
