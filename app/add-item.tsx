@@ -3,8 +3,10 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useState, useEffect } from 'react';
 import { ArrowLeft, ScanLine, Save, Camera } from 'lucide-react-native';
 import { Colors } from '@/lib/colors';
-import { supabase, UnitType } from '@/lib/supabase';
+import { supabase, Item, UnitType } from '@/lib/supabase';
 import { useGuestGuard } from '@/lib/guest-guard';
+import { useAuth } from '@/lib/auth-context';
+import { offlineSync } from '@/lib/offline-sync';
 
 const UNITS: UnitType[] = ['Litre', 'Adet', 'Metre', 'Kg', 'Kutu', 'm²'];
 
@@ -20,6 +22,7 @@ const TRADE_CATEGORIES = [
 export default function AddItemScreen() {
   const router = useRouter();
   const { requireAuth } = useGuestGuard();
+  const { isGuest } = useAuth();
   const { barcode } = useLocalSearchParams<{ barcode?: string }>();
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -65,15 +68,53 @@ export default function AddItemScreen() {
         }
       }
 
+      const item: Item = {
+        id: `local-item-${Date.now()}`,
+        name: name.trim(),
+        quantity: parseFloat(quantity) || 0,
+        max_quantity: 100,
+        unit_type: unitType,
+        category_id: categoryId,
+        critical_level: 10,
+        barcode_value: barcodeValue || null,
+        image_url: null,
+        notes: notes || null,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+
+      if (isGuest) {
+        const cachedItems = await offlineSync.getCachedItems();
+        await offlineSync.cacheItems([item, ...cachedItems]);
+        router.back();
+        return;
+      }
+
       const { error } = await supabase.from('items').insert({
-        name: name.trim(), quantity: parseFloat(quantity) || 0, max_quantity: 100,
-        unit_type: unitType, category_id: categoryId, critical_level: 10,
-        barcode_value: barcodeValue || null, notes: notes || null,
+        name: item.name, quantity: item.quantity, max_quantity: item.max_quantity,
+        unit_type: item.unit_type, category_id: item.category_id, critical_level: item.critical_level,
+        barcode_value: item.barcode_value, notes: item.notes,
       });
       if (error) throw error;
       router.back();
-    } catch (error) {
-      Alert.alert('Hata', error instanceof Error ? error.message : 'Malzeme kaydedilemedi.');
+    } catch {
+      const cachedItems = await offlineSync.getCachedItems().catch(() => []);
+      const fallbackItem: Item = {
+        id: `local-item-${Date.now()}`,
+        name: name.trim(),
+        quantity: parseFloat(quantity) || 0,
+        max_quantity: 100,
+        unit_type: unitType,
+        category_id: null,
+        critical_level: 10,
+        barcode_value: barcodeValue || null,
+        image_url: null,
+        notes: notes || null,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+      await offlineSync.cacheItems([fallbackItem, ...cachedItems]).catch(() => {});
+      router.back();
     } finally {
       setSaving(false);
     }

@@ -7,10 +7,12 @@ import { supabase, Item } from '@/lib/supabase';
 import { BannerAd } from '@/components/BannerAd';
 import { offlineSync } from '@/lib/offline-sync';
 import { useGuestGuard } from '@/lib/guest-guard';
+import { useAuth } from '@/lib/auth-context';
 
 export default function DashboardScreen() {
   const router = useRouter();
   const { requireAuth } = useGuestGuard();
+  const { isGuest } = useAuth();
   const [items, setItems] = useState<Item[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -21,6 +23,12 @@ export default function DashboardScreen() {
   const fetchData = useCallback(async () => {
     try {
       setLoading(true);
+      if (isGuest) {
+        setItems(await offlineSync.getCachedItems());
+        const pending = await offlineSync.getPendingChanges();
+        setPendingCount(pending.length);
+        return;
+      }
       const { data } = await supabase
         .from('items')
         .select('*, categories(*)')
@@ -40,7 +48,7 @@ export default function DashboardScreen() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [isGuest]);
 
   useFocusEffect(useCallback(() => { fetchData(); }, [fetchData]));
 
