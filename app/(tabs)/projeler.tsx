@@ -1,7 +1,7 @@
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, Alert } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useState, useEffect } from 'react';
-import { Plus, Calculator, CheckCircle2, Circle, ArrowRight, Ruler, Package, WifiOff } from 'lucide-react-native';
+import { Plus, Calculator, CheckCircle2, Circle, ArrowRight, Ruler, Package, WifiOff, Trash2 } from 'lucide-react-native';
 import { Colors } from '@/lib/colors';
 import { supabase, Project } from '@/lib/supabase';
 import { BannerAd } from '@/components/BannerAd';
@@ -45,6 +45,29 @@ export default function ProjelerScreen() {
   }, [isGuest]);
 
   useFocusEffect(useCallback(() => { fetch().catch(() => {}); }, [fetch]));
+
+  const removeProject = (project: Project) => {
+    Alert.alert('Projeyi Sil', 'Bu projeyi ve içindeki malzemeleri silmek istediğinize emin misiniz?', [
+      { text: 'İptal', style: 'cancel' },
+      {
+        text: 'Sil',
+        style: 'destructive',
+        onPress: async () => {
+          try {
+            const cached = await offlineSync.getCachedProjects();
+            await offlineSync.cacheProjects(cached.filter(item => item.id !== project.id));
+            if (!isGuest && !project.id.startsWith('local-')) {
+              const { error } = await supabase.from('projects').delete().eq('id', project.id);
+              if (error) throw error;
+            }
+            setProjects(current => current.filter(item => item.id !== project.id));
+          } catch {
+            Alert.alert('Silinemedi', 'Proje silinirken bir sorun oluştu.');
+          }
+        },
+      },
+    ]);
+  };
 
   useEffect(() => {
     const unsub = offlineSync.onConnectivityChange(online => {
@@ -114,7 +137,12 @@ export default function ProjelerScreen() {
                       <Text style={styles.projectType}>{project.project_type}</Text>
                     </View>
                   </View>
-                  <ArrowRight color={Colors.neutral300} size={18} />
+                  <View style={styles.projectActions}>
+                    <TouchableOpacity style={styles.deleteButton} onPress={() => removeProject(project)}>
+                      <Trash2 color={Colors.danger} size={17} />
+                    </TouchableOpacity>
+                    <ArrowRight color={Colors.neutral300} size={18} />
+                  </View>
                 </View>
                 <View style={styles.projectMeta}>
                   {project.area_m2 != null && (
@@ -180,6 +208,8 @@ const styles = StyleSheet.create({
     shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 4, elevation: 2,
   },
   projectHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  projectActions: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  deleteButton: { width: 32, height: 32, borderRadius: 16, backgroundColor: '#FEF2F2', justifyContent: 'center', alignItems: 'center' },
   projectLeft: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   projectName: { fontFamily: 'Inter-SemiBold', fontSize: 15, color: Colors.neutral800 },
   projectType: { fontFamily: 'Inter-Regular', fontSize: 12, color: Colors.neutral400, marginTop: 2 },

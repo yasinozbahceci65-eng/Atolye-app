@@ -1,17 +1,19 @@
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, TextInput } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, TextInput, Alert } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useState } from 'react';
-import { Search, Plus, ScanLine, AlertTriangle, Filter, WifiOff } from 'lucide-react-native';
+import { Search, Plus, ScanLine, AlertTriangle, Filter, WifiOff, Trash2 } from 'lucide-react-native';
 import { Colors } from '@/lib/colors';
 import { supabase, Item, Category } from '@/lib/supabase';
 import { BannerAd } from '@/components/BannerAd';
 import { offlineSync } from '@/lib/offline-sync';
 import { useGuestGuard } from '@/lib/guest-guard';
+import { useAuth } from '@/lib/auth-context';
 import { useEffect } from 'react';
 
 export default function AtolyeScreen() {
   const router = useRouter();
   const { requireAuth } = useGuestGuard();
+  const { isGuest } = useAuth();
   const [items, setItems] = useState<Item[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
@@ -23,6 +25,11 @@ export default function AtolyeScreen() {
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
+      if (isGuest) {
+        setItems(await offlineSync.getCachedItems());
+        setCategories([]);
+        return;
+      }
       const [itemsRes, catRes] = await Promise.all([
         supabase.from('items').select('*, categories(*)').order('name'),
         supabase.from('categories').select('*').order('name'),
@@ -40,7 +47,7 @@ export default function AtolyeScreen() {
       setItems(cached);
     }
     setLoading(false);
-  }, []);
+  }, [isGuest]);
 
   useFocusEffect(useCallback(() => { fetchData(); }, [fetchData]));
 
@@ -51,6 +58,29 @@ export default function AtolyeScreen() {
     });
     return unsub;
   }, [fetchData]);
+
+  const removeItem = (item: Item) => {
+    Alert.alert('Malzemeyi Sil', 'Bu malzemeyi silmek istediğinize emin misiniz?', [
+      { text: 'İptal', style: 'cancel' },
+      {
+        text: 'Sil',
+        style: 'destructive',
+        onPress: async () => {
+          try {
+            const cached = await offlineSync.getCachedItems();
+            await offlineSync.cacheItems(cached.filter(current => current.id !== item.id));
+            if (!isGuest && !item.id.startsWith('local-')) {
+              const { error } = await supabase.from('items').delete().eq('id', item.id);
+              if (error) throw error;
+            }
+            setItems(current => current.filter(current => current.id !== item.id));
+          } catch {
+            Alert.alert('Silinemedi', 'Malzeme silinirken bir sorun oluştu.');
+          }
+        },
+      },
+    ]);
+  };
 
   const filtered = items.filter(i => {
     const matchSearch = i.name.toLowerCase().includes(search.toLowerCase());
@@ -161,12 +191,17 @@ export default function AtolyeScreen() {
                     <Text style={styles.itemCategory}>{item.categories?.name || 'Kategorisiz'}</Text>
                   </View>
                 </View>
-                {item.quantity <= item.critical_level && (
-                  <View style={styles.criticalBadge}>
-                    <AlertTriangle color={Colors.danger} size={12} />
-                    <Text style={styles.criticalText}>Kritik</Text>
-                  </View>
-                )}
+                <View style={styles.itemActions}>
+                  {item.quantity <= item.critical_level && (
+                    <View style={styles.criticalBadge}>
+                      <AlertTriangle color={Colors.danger} size={12} />
+                      <Text style={styles.criticalText}>Kritik</Text>
+                    </View>
+                  )}
+                  <TouchableOpacity style={styles.deleteButton} onPress={() => removeItem(item)}>
+                    <Trash2 color={Colors.danger} size={16} />
+                  </TouchableOpacity>
+                </View>
               </View>
               <View style={styles.progressRow}>
                 <View style={styles.progressContainer}>
@@ -229,6 +264,8 @@ const styles = StyleSheet.create({
     shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 4, elevation: 2,
   },
   itemHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
+  itemActions: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  deleteButton: { width: 30, height: 30, borderRadius: 15, backgroundColor: '#FEF2F2', justifyContent: 'center', alignItems: 'center' },
   itemLeft: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   categoryDot: { width: 12, height: 12, borderRadius: 6 },
   itemName: { fontFamily: 'Inter-SemiBold', fontSize: 15, color: Colors.neutral800 },
