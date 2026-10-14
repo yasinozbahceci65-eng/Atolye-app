@@ -54,12 +54,15 @@ export default function ConsultScreen() {
     try {
       const response = await fetch(photo);
       if (!response.ok) throw new Error('photo_fetch_failed');
-      const fileBuffer = await response.arrayBuffer();
-      const fileName = `consult/${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}.jpg`;
+      const photoBlob = await response.blob();
+      if (photoBlob.size === 0) throw new Error('empty_photo');
+      const contentType = photoBlob.type.startsWith('image/') ? photoBlob.type : 'image/jpeg';
+      const extension = contentType === 'image/png' ? 'png' : contentType === 'image/webp' ? 'webp' : 'jpg';
+      const fileName = `consult/${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}.${extension}`;
       const { error: uploadError } = await supabase.storage
         .from('consult-photos')
-        .upload(fileName, fileBuffer, {
-          contentType: 'image/jpeg',
+        .upload(fileName, photoBlob, {
+          contentType,
           cacheControl: '3600',
           upsert: false,
         });
@@ -70,11 +73,15 @@ export default function ConsultScreen() {
 
       const prefix = isUsta ? 'Ustaya Danışma' : 'Mimara Danışma';
       const message = `${prefix}\n\n${description.trim()}\n\nFotoğraf Linki:\n${data.publicUrl}`;
-      const whatsappUrl = `https://api.whatsapp.com/send?phone=${WHATSAPP_NUMBER}&text=${encodeURIComponent(message)}`;
-      await Linking.openURL(whatsappUrl);
-      router.back();
+      const whatsappUrl = `https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(message)}`;
+      try {
+        await Linking.openURL(whatsappUrl);
+        router.back();
+      } catch {
+        Alert.alert('Fotoğraf yüklendi', 'Fotoğraf başarıyla yüklendi ancak WhatsApp açılamadı. Bağlantıyı tekrar deneyin.');
+      }
     } catch {
-      Alert.alert('Gönderilemedi', 'Fotoğraf yüklenemedi veya WhatsApp açılamadı. Lütfen tekrar deneyin.');
+      Alert.alert('Gönderilemedi', 'Fotoğraf yüklenemedi. Lütfen tekrar deneyin.');
     } finally {
       setSending(false);
     }
