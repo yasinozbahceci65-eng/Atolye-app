@@ -45,6 +45,27 @@ export default function AddItemScreen() {
     if (!name.trim()) { Alert.alert('Uyarı', 'Lütfen malzeme adı girin'); return; }
     setSaving(true);
     try {
+      if (isGuest) {
+        const localItem: Item = {
+          id: `local-item-${Date.now()}`,
+          name: name.trim(),
+          quantity: parseFloat(quantity) || 0,
+          max_quantity: 100,
+          unit_type: unitType,
+          category_id: null,
+          critical_level: 10,
+          barcode_value: barcodeValue || null,
+          image_url: null,
+          notes: notes || null,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        };
+        const cachedItems = await offlineSync.getCachedItems();
+        await offlineSync.cacheItems([localItem, ...cachedItems]);
+        router.back();
+        return;
+      }
+
       let categoryId: string | null = null;
       if (selectedCategory) {
         const category = TRADE_CATEGORIES.find(item => item.name === selectedCategory);
@@ -82,13 +103,6 @@ export default function AddItemScreen() {
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       };
-
-      if (isGuest) {
-        const cachedItems = await offlineSync.getCachedItems();
-        await offlineSync.cacheItems([item, ...cachedItems]);
-        router.back();
-        return;
-      }
 
       const { error } = await supabase.from('items').insert({
         name: item.name, quantity: item.quantity, max_quantity: item.max_quantity,

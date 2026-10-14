@@ -43,10 +43,11 @@ export default function AtolyeScreen() {
       }
       setCategories(catRes.data ?? []);
     } catch {
-      const cached = await offlineSync.getCachedItems();
+      const cached = await offlineSync.getCachedItems().catch(() => []);
       setItems(cached);
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   }, [isGuest]);
 
   useFocusEffect(useCallback(() => { fetchData(); }, [fetchData]));
