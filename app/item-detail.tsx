@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { ArrowLeft, Minus, Plus, Trash2, ScanLine, AlertTriangle, Save } from 'lucide-react-native';
 import { Colors } from '@/lib/colors';
 import { supabase, Item, Category, UnitType } from '@/lib/supabase';
+import { offlineSync } from '@/lib/offline-sync';
 
 const UNITS: UnitType[] = ['Litre', 'Adet', 'Metre', 'Kg', 'Kutu', 'm²'];
 
@@ -23,27 +24,38 @@ export default function ItemDetailScreen() {
   const [barcodeValue, setBarcodeValue] = useState('');
   const [notes, setNotes] = useState('');
 
+  const applyItem = (it: Item) => {
+    setItem(it);
+    setName(it.name);
+    setQuantity(String(it.quantity));
+    setMaxQuantity(String(it.max_quantity));
+    setUnitType(it.unit_type);
+    setCategoryId(it.category_id);
+    setCriticalLevel(String(it.critical_level));
+    setBarcodeValue(it.barcode_value || '');
+    setNotes(it.notes || '');
+  };
+
   const fetch = useCallback(async () => {
     try {
+      if (id?.startsWith('local-')) {
+        const cachedItems = await offlineSync.getCachedItems();
+        const localItem = cachedItems.find(cachedItem => cachedItem.id === id);
+        if (localItem) applyItem(localItem);
+        setCategories([]);
+        return;
+      }
+
       const [itemRes, catRes] = await Promise.all([
         supabase.from('items').select('*, categories(*)').eq('id', id).maybeSingle(),
         supabase.from('categories').select('*').order('name'),
       ]);
-      if (itemRes.data) {
-        const it = itemRes.data;
-        setItem(it);
-        setName(it.name);
-        setQuantity(String(it.quantity));
-        setMaxQuantity(String(it.max_quantity));
-        setUnitType(it.unit_type);
-        setCategoryId(it.category_id);
-        setCriticalLevel(String(it.critical_level));
-        setBarcodeValue(it.barcode_value || '');
-        setNotes(it.notes || '');
-      }
+      if (itemRes.data) applyItem(itemRes.data);
       setCategories(catRes.data ?? []);
     } catch {
-      // supabase erisim hatasi
+      const cachedItems = await offlineSync.getCachedItems().catch(() => []);
+      const localItem = cachedItems.find(cachedItem => cachedItem.id === id);
+      if (localItem) applyItem(localItem);
     } finally {
       setLoading(false);
     }
@@ -59,22 +71,44 @@ export default function ItemDetailScreen() {
   const save = async () => {
     if (!item) return;
     setSaving(true);
+    const updatedAt = new Date().toISOString();
+    const updatedItem: Item = {
+      ...item,
+      name: name.trim(),
+      quantity: parseFloat(quantity) || 0,
+      max_quantity: parseFloat(maxQuantity) || 100,
+      unit_type: unitType,
+      category_id: categoryId,
+      critical_level: parseFloat(criticalLevel) || 10,
+      barcode_value: barcodeValue || null,
+      notes: notes || null,
+      updated_at: updatedAt,
+    };
+
+    if (item.id.startsWith('local-')) {
+      const cachedItems = await offlineSync.getCachedItems();
+      await offlineSync.cacheItems(cachedItems.map(cachedItem => cachedItem.id === item.id ? updatedItem : cachedItem));
+      setSaving(false);
+      router.back();
+      return;
+    }
+
     const { error } = await supabase
       .from('items')
       .update({
-        name,
-        quantity: parseFloat(quantity) || 0,
-        max_quantity: parseFloat(maxQuantity) || 100,
-        unit_type: unitType,
-        category_id: categoryId,
-        critical_level: parseFloat(criticalLevel) || 10,
-        barcode_value: barcodeValue || null,
-        notes: notes || null,
-        updated_at: new Date().toISOString(),
+        name: updatedItem.name,
+        quantity: updatedItem.quantity,
+        max_quantity: updatedItem.max_quantity,
+        unit_type: updatedItem.unit_type,
+        category_id: updatedItem.category_id,
+        critical_level: updatedItem.critical_level,
+        barcode_value: updatedItem.barcode_value,
+        notes: updatedItem.notes,
+        updated_at: updatedItem.updated_at,
       })
       .eq('id', item.id);
     setSaving(false);
-    if (error) Alert.alert('Hata', error.message);
+    if (error) Alert.alert('Hata', 'Malzeme güncellenemedi. Lütfen tekrar deneyin.');
     else router.back();
   };
 
@@ -83,7 +117,12 @@ export default function ItemDetailScreen() {
       { text: 'İptal', style: 'cancel' },
       {
         text: 'Sil', style: 'destructive', onPress: async () => {
-          await supabase.from('items').delete().eq('id', item!.id);
+          if (item!.id.startsWith('local-')) {
+            const cachedItems = await offlineSync.getCachedItems();
+            await offlineSync.cacheItems(cachedItems.filter(cachedItem => cachedItem.id !== item!.id));
+          } else {
+            await supabase.from('items').delete().eq('id', item!.id);
+          }
           router.back();
         }
       }
