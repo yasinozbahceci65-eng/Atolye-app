@@ -1,9 +1,10 @@
-import { View, Text, StyleSheet, TouchableOpacity, TextInput, Image, ScrollView, Alert, ActivityIndicator, Linking } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, TextInput, Image, ScrollView, Alert, ActivityIndicator, Linking, Platform } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useState, useCallback } from 'react';
 import { ArrowLeft, Camera, Image as ImageIcon, Send, MessageCircle, X } from 'lucide-react-native';
 import { Colors } from '@/lib/colors';
 import * as ImagePicker from 'expo-image-picker';
+import { File } from 'expo-file-system';
 import { supabase } from '@/lib/supabase';
 
 const WHATSAPP_NUMBER = '905537743488';
@@ -13,6 +14,7 @@ export default function ConsultScreen() {
   const router = useRouter();
   const isUsta = type === 'usta';
   const [photo, setPhoto] = useState<string | null>(null);
+  const [photoType, setPhotoType] = useState<string>('image/jpeg');
   const [description, setDescription] = useState('');
   const [sending, setSending] = useState(false);
 
@@ -28,6 +30,7 @@ export default function ConsultScreen() {
     });
     if (!result.canceled && result.assets[0]) {
       setPhoto(result.assets[0].uri);
+      setPhotoType(result.assets[0].mimeType || 'image/jpeg');
     }
   }, []);
 
@@ -43,6 +46,7 @@ export default function ConsultScreen() {
     });
     if (!result.canceled && result.assets[0]) {
       setPhoto(result.assets[0].uri);
+      setPhotoType(result.assets[0].mimeType || 'image/jpeg');
     }
   }, []);
 
@@ -52,16 +56,32 @@ export default function ConsultScreen() {
     setSending(true);
 
     try {
-      const response = await fetch(photo);
-      if (!response.ok) throw new Error('photo_fetch_failed');
-      const photoBlob = await response.blob();
-      if (photoBlob.size === 0) throw new Error('empty_photo');
-      const contentType = photoBlob.type.startsWith('image/') ? photoBlob.type : 'image/jpeg';
+      let uploadBody: Blob | ArrayBuffer;
+      let photoSize = 0;
+      let contentType = photoType.startsWith('image/') ? photoType : 'image/jpeg';
+
+      if (Platform.OS === 'web') {
+        const response = await fetch(photo);
+        if (!response.ok) throw new Error('photo_fetch_failed');
+        uploadBody = await response.blob();
+        photoSize = uploadBody.size;
+        if (photoSize === 0) throw new Error('empty_photo');
+        if (uploadBody.type.startsWith('image/')) contentType = uploadBody.type;
+      } else {
+        const localFile = new File(photo);
+        const bytes = await localFile.bytes();
+        if (bytes.byteLength === 0) throw new Error('empty_photo');
+        photoSize = bytes.byteLength;
+        uploadBody = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+      }
+
+      if (photoSize > 8 * 1024 * 1024) throw new Error('photo_too_large');
+      if (!['image/jpeg', 'image/png', 'image/webp'].includes(contentType)) contentType = 'image/jpeg';
       const extension = contentType === 'image/png' ? 'png' : contentType === 'image/webp' ? 'webp' : 'jpg';
       const fileName = `consult/${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}.${extension}`;
       const { error: uploadError } = await supabase.storage
         .from('consult-photos')
-        .upload(fileName, photoBlob, {
+        .upload(fileName, uploadBody, {
           contentType,
           cacheControl: '3600',
           upsert: false,
